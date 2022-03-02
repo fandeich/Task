@@ -5,18 +5,20 @@ import (
 	"fmt"
 	"github.com/gocarina/gocsv"
 	"io/ioutil"
+	"math"
 	"os"
 	"strconv"
 	"time"
 )
 
 type (
+	//Trans структура для обработанных транзакций
 	Trans struct {
 		ID              string
 		Amount          float64
 		BankName        string
 		BankCountryCode string
-		API             int
+		Time            int //Время прихода ответа от банка
 	}
 
 	Transaction struct {
@@ -29,7 +31,8 @@ type (
 
 const defaultMaxTxDuration = time.Second
 
-func ConvertIn(tx []Transaction) (TX []Trans, err error) {
+//Convert Обрабатываем slice []Transaction
+func Convert(tx []Transaction) (TX []Trans, err error) {
 	Json, err := os.Open("api_latencies.json")
 	if err != nil {
 		return
@@ -38,7 +41,7 @@ func ConvertIn(tx []Transaction) (TX []Trans, err error) {
 
 	byteValue, _ := ioutil.ReadAll(Json)
 
-	var api map[string]string
+	var api map[string]int
 	json.Unmarshal([]byte(byteValue), &api)
 
 	TX = make(
@@ -52,28 +55,13 @@ func ConvertIn(tx []Transaction) (TX []Trans, err error) {
 		tmp.Amount, _ = strconv.ParseFloat(i.Amount, 64)
 		tmp.BankName = i.BankName
 		tmp.BankCountryCode = i.BankCountryCode
-		tmp.API, _ = strconv.Atoi(api[i.BankCountryCode])
+		tmp.Time = api[i.BankCountryCode]
 		TX = append(TX, tmp)
 	}
 	return
 }
 
-func ConvertOut(tx []Trans) (TX []Transaction) {
-	TX = make(
-		[]Transaction,
-		0,
-		len(tx),
-	)
-	for _, i := range tx {
-		var tmp Transaction
-		tmp.ID = i.ID
-		tmp.Amount = strconv.FormatFloat(i.Amount, 'E', -1, 64)
-		tmp.BankName = i.BankName
-		tmp.BankCountryCode = i.BankCountryCode
-		TX = append(TX, tmp)
-	}
-	return
-}
+//CsvParse Из Csv файла с транзакциями делаем slice []Transaction
 func CsvParse(file string) (transactions []Transaction) {
 	db, err := os.Open(file)
 	defer db.Close()
@@ -87,60 +75,67 @@ func CsvParse(file string) (transactions []Transaction) {
 	return
 }
 
+//prioritize Ищем подходящие транзакции алгоритмом динамического программирования
 func prioritize(tx []Transaction, dur time.Duration) (ans []Transaction, err error) {
 	if dur == 0 {
 		dur = defaultMaxTxDuration
 	}
 	MaxDur := int(dur.Milliseconds())
-	TX, err := ConvertIn(tx)
+	TX, err := Convert(tx)
 	matr := make([][]float64, len(tx)+1)
 	for i := 0; i < len(tx)+1; i++ {
 		matr[i] = make([]float64, MaxDur+1)
 	}
 
-	for i := 0; i <= len(TX); i++ {
+	for i := 0; i <= len(TX); i++ { //Ищем максимальное количество Долларов
 		for j := 0; j <= MaxDur; j++ {
-			//fmt.Println(i, j)
 			if i == 0 || j == 0 {
 				matr[i][j] = 0
 			} else {
-				if TX[i-1].API > j {
+				if TX[i-1].Time > j {
 					matr[i][j] = matr[i-1][j]
 				} else {
 					prev := matr[i-1][j]
-					byFormula := TX[i-1].Amount + matr[i-1][j-TX[i-1].API]
-					if prev > byFormula {
-						if i == len(TX) {
-							ans = append(ans, tx[i-2])
-						}
-						matr[i][j] = prev
-					} else {
-						if i == len(TX) {
-							ans = append(ans, tx[i-1])
-						}
-						matr[i][j] = byFormula
-					}
+					Formula := TX[i-1].Amount + matr[i-1][j-TX[i-1].Time]
+					matr[i][j] = math.Max(prev, Formula)
 				}
 			}
 		}
 	}
-	fmt.Println(matr[len(TX)][MaxDur])
 
+	for i := len(TX); i > 0; i-- { //Составляем slice нужных транзакций
+		if matr[i][MaxDur] > matr[i-1][MaxDur] {
+			ans = append(ans, tx[i-1])
+			MaxDur -= TX[i-1].Time
+		}
+	}
+	return
+}
+
+func GetSum(tx []Transaction) (sum float64) { //Получаем сумму транзакций из slice
+	for i := 0; i < len(tx); i++ {
+		tmp, _ := strconv.ParseFloat(tx[i].Amount, 64)
+		sum += tmp
+	}
 	return
 }
 
 func main() {
-	fmt.Println(time.Now())
-
 	transactions := CsvParse("transactions.csv")
 
-	trans, _ := prioritize(transactions, 1*time.Second)
-	sum := .0
-	for i := 0; i < len(trans); i++ {
-		tmp, _ := strconv.ParseFloat(trans[i].Amount, 64)
-		sum += tmp
-	}
-	fmt.Println(sum)
-	fmt.Println(time.Now())
+	TimeNow := time.Now()
+	trans, _ := prioritize(transactions, 1000*time.Millisecond)
+	fmt.Printf("Answer question 1 \n(1 second): %.2f(USD), tiwe work: %v(ms)\n\n", GetSum(trans), time.Now().Sub(TimeNow).Milliseconds())
+
+	fmt.Println("Answer question 2 :")
+	TimeNow = time.Now()
+	trans, _ = prioritize(transactions, 50*time.Millisecond)
+	fmt.Printf("(50ms): %.2f(USD), tiwe work: %v(ms)\n", GetSum(trans), time.Now().Sub(TimeNow).Milliseconds())
+	TimeNow = time.Now()
+	trans, _ = prioritize(transactions, 60*time.Millisecond)
+	fmt.Printf("(60ms): %.2f(USD), tiwe work: %v(ms)\n", GetSum(trans), time.Now().Sub(TimeNow).Milliseconds())
+	TimeNow = time.Now()
+	trans, _ = prioritize(transactions, 90*time.Millisecond)
+	fmt.Printf("(90ms): %.2f(USD), tiwe work: %v(ms)\n", GetSum(trans), time.Now().Sub(TimeNow).Milliseconds())
 
 }
