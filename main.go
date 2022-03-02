@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/gocarina/gocsv"
 	"io/ioutil"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -75,7 +76,6 @@ func ConvertOut(tx []Trans) (TX []Transaction) {
 	return
 }
 func CsvParse(file string) (transactions []Transaction) {
-	fmt.Println(time.Now())
 	db, err := os.Open(file)
 	defer db.Close()
 
@@ -91,8 +91,31 @@ func prioritize(tx []Transaction, dur time.Duration) (ans []Transaction, err err
 	if dur == 0 {
 		dur = defaultMaxTxDuration
 	}
+	MaxDur := int(dur.Milliseconds())
 	TX, err := ConvertIn(tx)
-	var matr [len(TX)][]float64
+	matr := make([][]float64, len(tx)+1)
+	for i := 0; i < len(tx)+1; i++ {
+		matr[i] = make([]float64, MaxDur+1)
+	}
+
+	for i := 0; i <= len(TX); i++ {
+		for j := 0; j <= MaxDur; j++ {
+			//fmt.Println(i, j)
+			if i == 0 || j == 0 {
+				matr[i][j] = 0
+			} else {
+				if TX[i-1].API > j {
+					matr[i][j] = matr[i-1][j]
+				} else {
+					prev := matr[i-1][j]
+					byFormula := TX[i-1].Amount + matr[i-1][j-TX[i-1].API]
+					matr[i][j] = math.Max(prev, byFormula)
+				}
+			}
+		}
+	}
+	fmt.Println(matr[len(TX)][MaxDur])
+
 	return
 }
 
